@@ -2,10 +2,12 @@ import express from "express";
 import { randomBytes } from "crypto";
 import { supabase } from "../lib/supabase.js";
 import {
+  merchantProfileUpdateZodSchema,
   registerMerchantZodSchema,
   sessionBrandingSchema,
 } from "../lib/request-schemas.js";
 import { resolveBrandingConfig } from "../lib/branding.js";
+import { resolveMerchantSettings } from "../lib/merchant-settings.js";
 
 const router = express.Router();
 
@@ -77,6 +79,7 @@ router.post("/register-merchant", async (req, res, next) => {
       notification_email,
       api_key: apiKey,
       webhook_secret: webhookSecret,
+      merchant_settings: resolveMerchantSettings(body.merchant_settings),
       created_at: new Date().toISOString()
     };
 
@@ -98,6 +101,7 @@ router.post("/register-merchant", async (req, res, next) => {
         email: merchant.email,
         business_name: merchant.business_name,
         notification_email: merchant.notification_email,
+        merchant_settings: resolveMerchantSettings(merchant.merchant_settings),
         api_key: merchant.api_key,
         webhook_secret: merchant.webhook_secret,
         created_at: merchant.created_at
@@ -190,6 +194,77 @@ router.put("/merchant-branding", async (req, res, next) => {
     }
 
     res.json({ branding_config: data.branding_config });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/merchant-profile", async (req, res, next) => {
+  try {
+    const { data, error } = await supabase
+      .from("merchants")
+      .select(
+        "id, email, business_name, notification_email, merchant_settings, created_at",
+      )
+      .eq("id", req.merchant.id)
+      .maybeSingle();
+
+    if (error) {
+      error.status = 500;
+      throw error;
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: "Merchant profile not found" });
+    }
+
+    res.json({
+      merchant: {
+        ...data,
+        merchant_settings: resolveMerchantSettings(data.merchant_settings),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put("/merchant-profile", async (req, res, next) => {
+  try {
+    const body = merchantProfileUpdateZodSchema.parse(req.body || {});
+    const updatePayload = {};
+
+    if (body.notification_email !== undefined) {
+      updatePayload.notification_email = body.notification_email;
+    }
+
+    if (body.merchant_settings !== undefined) {
+      updatePayload.merchant_settings = resolveMerchantSettings({
+        ...req.merchant.merchant_settings,
+        ...body.merchant_settings,
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("merchants")
+      .update(updatePayload)
+      .eq("id", req.merchant.id)
+      .select(
+        "id, email, business_name, notification_email, merchant_settings, created_at",
+      )
+      .single();
+
+    if (error) {
+      error.status = 500;
+      throw error;
+    }
+
+    res.json({
+      merchant: {
+        ...data,
+        merchant_settings: resolveMerchantSettings(data.merchant_settings),
+      },
+    });
   } catch (err) {
     next(err);
   }
