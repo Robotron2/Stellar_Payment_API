@@ -4,7 +4,7 @@ import express from "express";
 import morgan from "morgan";
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
- 
+import { ZodError } from "zod";
 import paymentsRouter from "./routes/payments.js";
 import merchantsRouter from "./routes/merchants.js";
 import metricsRouter from "./routes/metrics.js";
@@ -13,6 +13,7 @@ import { isHorizonReachable } from "./lib/stellar.js";
 import { supabase } from "./lib/supabase.js";
 import { pool, closePool } from "./lib/db.js";
 import { validateEnvironmentVariables } from "./lib/env-validation.js";
+import { formatZodError } from "./lib/request-schemas.js";
 import { idempotencyMiddleware } from "./lib/idempotency.js";
 
 validateEnvironmentVariables();
@@ -110,6 +111,12 @@ app.use("/api", merchantsRouter);
 app.use("/api", metricsRouter);
 
 app.use((err, req, res, next) => {
+  if (err instanceof ZodError) {
+    return res.status(400).json({
+      error: formatZodError(err)
+    });
+  }
+
   const status = err.status || 500;
   res.status(status).json({
     error: err.message || "Internal Server Error",
