@@ -9,6 +9,9 @@ import {
   webhookSettingsSchema,
 } from "../lib/request-schemas.js";
 import { resolveBrandingConfig } from "../lib/branding.js";
+import { resolveMerchantSettings } from "../lib/merchant-settings.js";
+import { sendWebhook } from "../lib/webhooks.js";
+import { getPayloadForVersion } from "../webhooks/resolver.js";
 
 const router = express.Router();
 
@@ -292,9 +295,95 @@ router.put("/merchant-branding", async (req, res, next) => {
     next(err);
   }
 });
-
 // ─── Webhook Settings ────────────────────────────────────────────────────────
 
+router.get("/merchant-profile", async (req, res, next) => {
+  try {
+    const { data, error } = await supabase
+      .from("merchants")
+      .select(
+        "id, email, business_name, notification_email, merchant_settings, created_at",
+      )
+      .eq("id", req.merchant.id)
+      .maybeSingle();
+
+    if (error) {
+      error.status = 500;
+      throw error;
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: "Merchant profile not found" });
+    }
+
+    res.json({
+      merchant: {
+        ...data,
+        merchant_settings: resolveMerchantSettings(data.merchant_settings),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @swagger
+ * /api/test-webhook:
+ *   post:
+ *     summary: Send a test ping to a webhook URL
+ *     tags: [Merchants]
+ *     security:
+ *       - ApiKeyAuth: []
+ */
+router.post("/test-webhook", async (req, res, next) => {
+  try {
+    const { webhook_url } = req.body || {};
+
+    if (!webhook_url) {
+      return res.status(400).json({ error: "webhook_url is required" });
+    }
+
+    const urlValidation = z.string().url().safeParse(webhook_url);
+    if (!urlValidation.success) {
+      return res.status(400).json({ error: "webhook_url must be a valid URL" });
+    }
+
+    const payload = getPayloadForVersion(
+      req.merchant.webhook_version || "v1",
+      "ping",
+      {
+        merchant_id: req.merchant.id,
+        timestamp: new Date().toISOString(),
+      }
+    );
+
+    const result = await sendWebhook(
+      webhook_url,
+      payload,
+      req.merchant.webhook_secret || null
+    );
+
+    res.json({
+      ok: result.ok,
+      status: result.status ?? null,
+      body: result.body ?? null,
+      signed: result.signed,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const paymentLimitsSchema = z
+  .record(
+    z.string().min(1),
+    z.object({
+      min: z.number().positive().optional(),
+      max: z.number().positive().optional(),
+    })
+  )
+  .optional();
 /**
  * @swagger
  * /api/webhook-settings:
